@@ -6,10 +6,15 @@ Every training run and evaluation appends a record to results/experiment_log.jso
 import json
 import logging
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
 from src.utils.config import EXPERIMENT_LOG_PATH
+
+# Protects the read-modify-write cycle in save_experiment_result against
+# concurrent calls from multiple threads in the same process.
+_log_lock = threading.Lock()
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -46,15 +51,16 @@ def save_experiment_result(
         "notes": notes,
     }
 
-    existing_records: list[dict] = []
-    if EXPERIMENT_LOG_PATH.exists():
-        with open(EXPERIMENT_LOG_PATH) as log_file:
-            existing_records = json.load(log_file)
+    with _log_lock:
+        existing_records: list[dict] = []
+        if EXPERIMENT_LOG_PATH.exists():
+            with open(EXPERIMENT_LOG_PATH) as log_file:
+                existing_records = json.load(log_file)
 
-    existing_records.append(result_record)
+        existing_records.append(result_record)
 
-    with open(EXPERIMENT_LOG_PATH, "w") as log_file:
-        json.dump(existing_records, log_file, indent=2)
+        with open(EXPERIMENT_LOG_PATH, "w") as log_file:
+            json.dump(existing_records, log_file, indent=2)
 
     logger = get_logger(__name__)
     logger.info(f"Experiment result saved → {EXPERIMENT_LOG_PATH}")
