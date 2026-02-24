@@ -57,3 +57,62 @@ def compute_all_metrics(
         "r_squared":            r_squared(actual_values, predicted_values),
         "directional_accuracy": directional_accuracy(actual_values, predicted_values),
     }
+
+
+def compute_per_step_metrics(
+    actual_values: np.ndarray,
+    predicted_values: np.ndarray,
+) -> dict[str, float]:
+    """
+    Compute MAE, RMSE, R², and directional accuracy for each prediction step
+    individually, plus aggregate metrics across all steps.
+
+    Parameters
+    ----------
+    actual_values : np.ndarray
+        Shape (N, prediction_steps) — ground-truth SPY close prices.
+    predicted_values : np.ndarray
+        Shape (N, prediction_steps) — model-predicted SPY close prices.
+
+    Returns
+    -------
+    dict[str, float]
+        Keys follow the pattern:
+          mae_step_{k}, rmse_step_{k}, r2_step_{k}, directional_accuracy_step_{k}
+          for k in 1..prediction_steps, plus:
+          mae_aggregate, rmse_aggregate, r2_aggregate, directional_accuracy_aggregate
+    """
+    if actual_values.ndim != 2 or predicted_values.ndim != 2:
+        raise ValueError(
+            f"Both arrays must be 2-D (N, prediction_steps). "
+            f"Got actual={actual_values.shape}, predicted={predicted_values.shape}."
+        )
+    if actual_values.shape != predicted_values.shape:
+        raise ValueError(
+            f"actual_values and predicted_values must have the same shape. "
+            f"Got {actual_values.shape} vs {predicted_values.shape}."
+        )
+
+    number_of_steps = actual_values.shape[1]
+    result: dict[str, float] = {}
+
+    for step_index in range(number_of_steps):
+        step_label = step_index + 1
+        actual_step    = actual_values[:, step_index]
+        predicted_step = predicted_values[:, step_index]
+
+        result[f"mae_step_{step_label}"]                  = mean_absolute_error(actual_step, predicted_step)
+        result[f"rmse_step_{step_label}"]                 = root_mean_squared_error(actual_step, predicted_step)
+        result[f"r2_step_{step_label}"]                   = r_squared(actual_step, predicted_step)
+        result[f"directional_accuracy_step_{step_label}"] = directional_accuracy(actual_step, predicted_step)
+
+    # Aggregate metrics treat all steps as a single flat sequence.
+    actual_flat    = actual_values.flatten()
+    predicted_flat = predicted_values.flatten()
+
+    result["mae_aggregate"]                  = mean_absolute_error(actual_flat, predicted_flat)
+    result["rmse_aggregate"]                 = root_mean_squared_error(actual_flat, predicted_flat)
+    result["r2_aggregate"]                   = r_squared(actual_flat, predicted_flat)
+    result["directional_accuracy_aggregate"] = directional_accuracy(actual_flat, predicted_flat)
+
+    return result

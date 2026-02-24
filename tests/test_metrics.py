@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from src.evaluation.metrics import (
     compute_all_metrics,
+    compute_per_step_metrics,
     directional_accuracy,
     mean_absolute_error,
     r_squared,
@@ -95,3 +96,74 @@ class TestComputeAllMetrics:
         assert metrics["rmse"] == pytest.approx(0.0, abs=1e-10)
         assert metrics["r_squared"] == pytest.approx(1.0)
         assert metrics["directional_accuracy"] == pytest.approx(100.0)
+
+
+class TestComputePerStepMetrics:
+    """Tests for the multi-step metrics function required by FR-006."""
+
+    NUMBER_OF_PREDICTION_STEPS = 5
+
+    def _make_perfect_batch(self, num_samples: int = 10) -> np.ndarray:
+        rng = np.random.default_rng(seed=0)
+        return rng.uniform(low=400.0, high=500.0, size=(num_samples, self.NUMBER_OF_PREDICTION_STEPS)).astype(np.float32)
+
+    def test_returns_all_per_step_and_aggregate_keys(self):
+        values  = self._make_perfect_batch()
+        metrics = compute_per_step_metrics(values, values)
+
+        for step in range(1, self.NUMBER_OF_PREDICTION_STEPS + 1):
+            assert f"mae_step_{step}"                  in metrics
+            assert f"rmse_step_{step}"                 in metrics
+            assert f"r2_step_{step}"                   in metrics
+            assert f"directional_accuracy_step_{step}" in metrics
+
+        assert "mae_aggregate"                  in metrics
+        assert "rmse_aggregate"                 in metrics
+        assert "r2_aggregate"                   in metrics
+        assert "directional_accuracy_aggregate" in metrics
+
+    def test_perfect_predictions_give_zero_error_per_step(self):
+        values  = self._make_perfect_batch()
+        metrics = compute_per_step_metrics(values, values)
+
+        for step in range(1, self.NUMBER_OF_PREDICTION_STEPS + 1):
+            assert metrics[f"mae_step_{step}"]  == pytest.approx(0.0, abs=1e-5)
+            assert metrics[f"rmse_step_{step}"] == pytest.approx(0.0, abs=1e-5)
+
+    def test_perfect_predictions_give_r2_of_one_per_step(self):
+        actual = self._make_perfect_batch()
+        # Add small noise so total_variance > 0 (r² is undefined for constant sequences)
+        noisy  = actual + np.random.default_rng(1).normal(0, 0.01, actual.shape)
+        metrics = compute_per_step_metrics(noisy, noisy)
+
+        for step in range(1, self.NUMBER_OF_PREDICTION_STEPS + 1):
+            assert metrics[f"r2_step_{step}"] == pytest.approx(1.0, abs=1e-5)
+
+    def test_aggregate_mae_consistent_with_flat_computation(self):
+        rng     = np.random.default_rng(seed=2)
+        actual    = rng.uniform(400.0, 500.0, (20, self.NUMBER_OF_PREDICTION_STEPS))
+        predicted = actual + rng.normal(0, 1.0, actual.shape)
+
+        metrics       = compute_per_step_metrics(actual, predicted)
+        expected_mae  = float(np.mean(np.abs(actual.flatten() - predicted.flatten())))
+
+        assert metrics["mae_aggregate"] == pytest.approx(expected_mae, rel=1e-5)
+
+    def test_raises_on_1d_input(self):
+        values_1d = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        with pytest.raises(ValueError, match="2-D"):
+            compute_per_step_metrics(values_1d, values_1d)
+
+    def test_raises_on_shape_mismatch(self):
+        actual    = np.ones((10, 5))
+        predicted = np.ones((10, 4))
+        with pytest.raises(ValueError, match="same shape"):
+            compute_per_step_metrics(actual, predicted)
+
+    def test_total_key_count_is_correct(self):
+        values  = self._make_perfect_batch()
+        metrics = compute_per_step_metrics(values, values)
+
+        # 4 metrics × 5 steps + 4 aggregate = 24 keys
+        expected_key_count = 4 * self.NUMBER_OF_PREDICTION_STEPS + 4
+        assert len(metrics) == expected_key_count
